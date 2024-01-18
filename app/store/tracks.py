@@ -1,29 +1,41 @@
-from tqdm import tqdm
+# from tqdm import tqdm
 
-from app.models import Track
 from app.db.sqlite.favorite import SQLiteFavoriteMethods as favdb
 from app.db.sqlite.tracks import SQLiteTrackMethods as tdb
+from app.models import Track
 from app.utils.bisection import UseBisection
 from app.utils.remove_duplicates import remove_duplicates
+from app.utils.progressbar import tqdm
+
+TRACKS_LOAD_KEY = ""
 
 
 class TrackStore:
     tracks: list[Track] = []
 
     @classmethod
-    def load_all_tracks(cls):
+    def load_all_tracks(cls, instance_key: str):
         """
         Loads all tracks from the database into the store.
         """
+
+        print("Loading tracks... ", end="")
+        global TRACKS_LOAD_KEY
+        TRACKS_LOAD_KEY = instance_key
 
         cls.tracks = list(tdb.get_all_tracks())
 
         fav_hashes = favdb.get_fav_tracks()
         fav_hashes = " ".join([t[1] for t in fav_hashes])
 
-        for track in tqdm(cls.tracks, desc="Loading tracks"):
+        for track in cls.tracks:
+            if instance_key != TRACKS_LOAD_KEY:
+                return
+
             if track.trackhash in fav_hashes:
                 track.is_favorite = True
+
+        print("Done!")
 
     @classmethod
     def add_track(cls, track: Track):
@@ -42,16 +54,14 @@ class TrackStore:
         cls.tracks.extend(tracks)
 
     @classmethod
-    def get_tracks_by_trackhashes(cls, trackhashes: list[str]) -> list[Track]:
+    def remove_track_obj(cls, track: Track):
         """
-        Returns a list of tracks by their hashes.
+        Removes a single track from the store.
         """
-
-        trackhashes = " ".join(trackhashes)
-        tracks = [track for track in cls.tracks if track.trackhash in trackhashes]
-
-        tracks.sort(key=lambda t: trackhashes.index(t.trackhash))
-        return tracks
+        try:
+            cls.tracks.remove(track)
+        except ValueError:
+            pass
 
     @classmethod
     def remove_track_by_filepath(cls, filepath: str):
@@ -61,8 +71,18 @@ class TrackStore:
 
         for track in cls.tracks:
             if track.filepath == filepath:
-                cls.tracks.remove(track)
+                cls.remove_track_obj(track)
                 break
+
+    @classmethod
+    def remove_tracks_by_filepaths(cls, filepaths: set[str]):
+        """
+        Removes multiple tracks from the store by their filepaths.
+        """
+
+        for track in cls.tracks:
+            if track.filepath in filepaths:
+                cls.remove_track_obj(track)
 
     @classmethod
     def remove_tracks_by_dir_except(cls, dirs: list[str]):
@@ -76,18 +96,11 @@ class TrackStore:
         tdb.remove_tracks_by_folders(to_remove)
 
     @classmethod
-    def count_tracks_by_hash(cls, trackhash: str) -> int:
+    def count_tracks_by_trackhash(cls, trackhash: str) -> int:
         """
-        Counts the number of tracks with a specific hash.
+        Counts the number of tracks with a specific trackhash.
         """
-
-        count = 0
-
-        for track in cls.tracks:
-            if track.trackhash == trackhash:
-                count += 1
-
-        return count
+        return sum(1 for track in cls.tracks if track.trackhash == trackhash)
 
     @classmethod
     def make_track_fav(cls, trackhash: str):
@@ -110,6 +123,31 @@ class TrackStore:
                 track.is_favorite = False
 
     @classmethod
+    def append_track_artists(
+        cls, albumhash: str, artists: list[str], new_album_title: str
+    ):
+        tracks = cls.get_tracks_by_albumhash(albumhash)
+
+        for track in tracks:
+            track.add_artists(artists, new_album_title)
+
+    # ================================================
+    # ================== GETTERS =====================
+    # ================================================
+
+    @classmethod
+    def get_tracks_by_trackhashes(cls, trackhashes: list[str]) -> list[Track]:
+        """
+        Returns a list of tracks by their hashes.
+        """
+
+        trackhashes = " ".join(trackhashes)
+        tracks = [track for track in cls.tracks if track.trackhash in trackhashes]
+
+        tracks.sort(key=lambda t: trackhashes.index(t.trackhash))
+        return tracks
+
+    @classmethod
     def get_tracks_by_filepaths(cls, paths: list[str]) -> list[Track]:
         """
         Returns all tracks matching the given paths.
@@ -124,12 +162,21 @@ class TrackStore:
         Returns all tracks matching the given album hash.
         """
         tracks = [t for t in cls.tracks if t.albumhash == album_hash]
-        return remove_duplicates(tracks)
+        return remove_duplicates(tracks, is_album_tracks=True)
 
     @classmethod
-    def get_tracks_by_artist(cls, artisthash: str) -> list[Track]:
+    def get_tracks_by_artisthash(cls, artisthash: str):
         """
         Returns all tracks matching the given artist. Duplicate tracks are removed.
         """
         tracks = [t for t in cls.tracks if artisthash in t.artist_hashes]
-        return remove_duplicates(tracks)
+        tracks = remove_duplicates(tracks)
+        tracks.sort(key=lambda x: x.last_mod)
+        return tracks
+
+    @classmethod
+    def get_tracks_in_path(cls, path: str):
+        """
+        Returns all tracks in the given path.
+        """
+        return (t for t in cls.tracks if t.folder.startswith(path))

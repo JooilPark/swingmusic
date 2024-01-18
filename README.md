@@ -1,24 +1,25 @@
-# Swing music
+<div align="center" style="display: flex; justify-content: center; align-items: center;">
+  <img class="lo" src='.github/images/logo-fill.light.svg' style="height: 4rem">
+</div>
+<div align="center" style="font-size: 2rem"><b>Swing Music</b></div>
 
-![SWING MUSIC PLAYER BANNER IMAGE](screenshots/readme-artist.webp)
+<div align="center"><b><sub><code>v1.4.6</code></sub></b></div>
+ 
+**<div align="center" style="padding-top: 1.25rem">[Download](https://swingmusic.vercel.app/downloads) • <a href="https://swingmusic.vercel.app/support-us.html" target="_blank">Support Development</a> • [Docs](https://swingmusic.vercel.app/guide/introduction.html) • [Screenshots](https://swingmusic.vercel.app) • [r/SwingMusicApp](https://www.reddit.com/r/SwingMusicApp)</div>**
 
-![SWING MUSIC PLAYER BANNER IMAGE](screenshots/readme-album.webp)
+##
 
-![SWING MUSIC PLAYER BANNER IMAGE](screenshots/readme-playlist.webp)
+[![Image showing the Swing Music artist page](.github/images/artist.webp)](https://raw.githubusercontent.com/swing-opensource/swingmusic/master/.github/images/artist.webp)
 
----
+##
 
-### Make listening to your local music fun again.
+Swing Music is a beautiful, self-hosted music player for your local audio files. Like a cooler Spotify ... but bring your own music. Just run the app and enjoy your music library in a web browser.
 
-`Swing` is a music player for local audio files built with both visual coolness and functionality in mind. Just run the app and enjoy your music library in a web browser.
+### Installation
 
-### For screenshots, see the [screenshots folder](https://github.com/geoffrey45/swingmusic/tree/master/screenshots).
+Swing Music is available as pre-compiled binaries for Windows and Linux. Just download the latest release from the [downloads page](https://swingmusic.vercel.app/downloads) and launch it.
 
-> Note: This project is in the early stages of development. Many features are missing but will be added with time.
-
-### Setup
-
-Download the latest release from the [release page](https://github.com/geoffrey45/swingmusic/releases) and launch it. For Linux, you need to make the file executable first.
+For Linux, you need to make the file executable first.
 
 ```bash
 chmod a+x ./swingmusic
@@ -26,88 +27,63 @@ chmod a+x ./swingmusic
 ./swingmusic
 ```
 
-The app should start at <http://localhost:1970> by default.
-
-```
-Usage: swingmusic [options]
-
-Options:
-    --build: Build the application (in development)
-    --host: Set the host
-    --port: Set the port
-
-    --show-feat, -sf: Do not extract featured artists from the song title
-    --show-prod, -sp: Do not hide producers in the song title
-
-    --help, -h: Show this help message
-    --version, -v: Show the app version
-```
-
-To stream your music across your local network, use the `--host` flag to run the app in all ports. Like this:
+The app should start at <http://localhost:1970> by default. Open it in your browser to use Swing Music. You can change the default port by using the `--port` flags.
 
 ```sh
-swingmusic --host 0.0.0.0
+swingmusic --port 1980
 ```
 
-The link to access the app will be printed on your terminal. Copy it and open it in your browser.
+### Options
 
-### Development
+Options are flags that can be passed when starting the app in the terminal to tweak runtime settings or perform tasks. You can use the `-h` flag to see all supported options. 
 
-This project is broken down into 2. The client and the server. The client comprises of the user interface code. This part is written in Typescript, Vue 3 and SCSS. To setup the client, checkout the [swing client repo ](https://github.com/geoffrey45/swing-client) on GitHub.
+> [!TIP]
+> You can read more about options in [the docs](https://swingmusic.vercel.app/guide/getting-started.html#options). 
 
-The second part of this project is the server. This is the main part of the app that runs on your machine, interacts with audio files and send data to the client. It's written in Python 3.
+### Docker
 
-The following instructions will guide you on how to setup the **server**.
-
----
-
-The project uses [Python poetry](https://python-poetry.org) as the virtual environment manager. Follow the instructions in [their docs](https://python-poetry.org/docs/) to install it in your machine.
-
-> It is assumed that you have `Python 3.10` or newer installed in your machine. This project uses type hinting features so older version of Python will not work. If you don't have Python installed in your machine, get it from the [python website](https://www.python.org/downloads/).
-
-Clone this repo locally in your machine. Then install the project dependencies and start the app.
+Pull the latest Docker image and run it:
 
 ```sh
-git clone https://github.com/geoffrey45/swingmusic.git
+docker pull ghcr.io/swing-opensource/swingmusic:latest
+```
 
-cd swingmusic
+```sh
+docker run --name swingmusic -p 1970:1970 \
+  -v /path/to/music:/music \
+  -v /path/to/config:/config \
+  --restart unless-stopped \
+  ghcr.io/swing-opensource/swingmusic:latest
+```
 
-# install dependencies using poetry
-poetry install
+Don't forget to replace `/path/to/music` and `/path/to/config` with the appropriate values. In addition, specify the the `/music` directory as the root directory. Using the `Home Directory` option won't work.
 
-# start the app
-poetry run python manage.py
+> [!TIP]
+> For more info, see the [Docker section](https://swingmusic.vercel.app/guide/getting-started.html#docker) on the docs.
+
+#### Using Docker Compose
+
+Here's a sample Docker compose file:
+
+```yaml
+services:
+  swingmusic:
+    image: swingmusic
+    container_name: swingmusic
+    volumes:
+      - /path/to/music:/music
+      - /path/to/config:/config
+    ports:
+      - "1970:1970"
+    restart: unless-stopped
 ```
 
 ### Contributing
 
-If you want to contribute to this project, feel free to open an issue or a pull request on Github. Your contributions are highly valued and appreciated. Feature suggestions, bug reports and code contribution are welcome.
+See [contributing guidelines](.github/contributing.md).
 
 ### License
 
 This software is provided to you with terms stated in the MIT License. Read the full text in the `LICENSE` file located at the root of this repository.
-
----
-
-### A brain dump ...
-
-I started working on this project on dec 2021. Why? I like listening and exploring music and I like it more when I can enjoy it (like really really). I'd been searching for cute music players for linux that allow me to manage my ever growing music library. Some of the main features I was looking for were:
-
-- A simple and beautiful user interface (main reason)
-- Creating automated daily mixes based on my listening activity.
-- Ability to move files around without breaking my playlists and mixes.
-- Something that can bring together all the audio files scattered all over my disks into a single place.
-- Browsing related artists and albums.
-- Reading albums & artists biographies and getting insights on song lyrics (kinda Genium.com-ish).
-- Web browser based user interface.
-- a lot more ... but I can't remember them at the moment
-
-I've been working to make sure that most (if not all) of the features listed above are built. Some of them are done, but most are not even touched yet. A lot of work is needed and I know that it will take a lot of time to build and perfect them.
-
-I've been keeping a small 🤥 list of a few cool features that I'd like to build in future. Some of the features listed there are outright stupid but some are cool. You can check it out in [this notion page](https://rhetorical-othnielia-565.notion.site/Cool-features-1a0cd5b797904da687bec441e7c7aa19). https://rhetorical-othnielia-565.notion.site/Cool-features-1a0cd5b797904da687bec441e7c7aa19
-
-I have been working on this project solo, so it’s very hard to push things fast. If you have programming knowledge in Python or Vue, feel free to contribute to the project. Your contributions are highly appreciated.
-
----
 
 **[MIT License](https://opensource.org/licenses/MIT) | Copyright (c) 2023 Mungai Njoroge**

@@ -19,7 +19,7 @@ def create_folder(path: str, count=0) -> Folder:
         name=folder.name,
         path=win_replace_slash(str(folder)),
         is_sym=folder.is_symlink(),
-        count=count
+        count=count,
     )
 
 
@@ -32,11 +32,11 @@ def get_folders(paths: list[str]):
 
     for track in TrackStore.tracks:
         for path in paths:
-            if track.filepath.startswith(path):
+            if track.folder.startswith(path):
                 count_dict[path] += 1
 
     folders = [{"path": path, "count": count_dict[path]} for path in paths]
-    return [create_folder(f['path'], f['count']) for f in folders if f['count'] > 0]
+    return [create_folder(f["path"], f["count"]) for f in folders if f["count"] > 0]
 
 
 class GetFilesAndDirs:
@@ -44,8 +44,9 @@ class GetFilesAndDirs:
     Get files and folders from a directory.
     """
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, tracks_only=False) -> None:
         self.path = path
+        self.tracks_only = tracks_only
 
     def __call__(self) -> tuple[list[Track], list[Folder]]:
         try:
@@ -80,6 +81,9 @@ class GetFilesAndDirs:
         files = [f["path"] for f in files_]
 
         tracks = TrackStore.get_tracks_by_filepaths(files)
-        folders = get_folders(dirs)
+
+        folders = []
+        if not self.tracks_only:
+            folders = get_folders(dirs)
 
         return tracks, folders

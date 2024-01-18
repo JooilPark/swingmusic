@@ -2,17 +2,20 @@
 Contains all the folder routes.
 """
 import os
-import psutil
-
 from pathlib import Path
+
+import psutil
 from flask import Blueprint, request
+from showinfm import show_in_file_manager
 
 from app import settings
-from app.lib.folderslib import GetFilesAndDirs, get_folders
 from app.db.sqlite.settings import SettingsSQLMethods as db
-from app.utils.wintools import win_replace_slash, is_windows
+from app.lib.folderslib import GetFilesAndDirs, get_folders
+from app.serializers.track import serialize_track
+from app.store.tracks import TrackStore as store
+from app.utils.wintools import is_windows, win_replace_slash
 
-api = Blueprint("folder", __name__, url_prefix="/")
+api = Blueprint("folder", __name__, url_prefix="")
 
 
 @api.route("/folder", methods=["POST"])
@@ -23,9 +26,11 @@ def get_folder_tree():
     data = request.get_json()
     req_dir = "$home"
 
+    tracks_only = False
     if data is not None:
         try:
             req_dir: str = data["folder"]
+            tracks_only: bool = data["tracks_only"]
         except KeyError:
             req_dir = "$home"
 
@@ -53,7 +58,7 @@ def get_folder_tree():
     else:
         req_dir = "/" + req_dir + "/" if not req_dir.startswith("/") else req_dir + "/"
 
-    tracks, folders = GetFilesAndDirs(req_dir)()
+    tracks, folders = GetFilesAndDirs(req_dir, tracks_only=tracks_only)()
 
     return {
         "tracks": tracks,
@@ -65,14 +70,24 @@ def get_all_drives(is_win: bool = False):
     """
     Returns a list of all the drives on a Windows machine.
     """
-    drives = psutil.disk_partitions()
+    drives = psutil.disk_partitions(all=True)
     drives = [d.mountpoint for d in drives]
 
     if is_win:
         drives = [win_replace_slash(d) for d in drives]
     else:
-        remove = ["/boot", "/boot/efi", "/tmp"]
-        drives = [d for d in drives if d not in remove]
+        remove = (
+            "/boot",
+            "/tmp",
+            "/snap",
+            "/var",
+            "/sys",
+            "/proc",
+            "/etc",
+            "/run",
+            "/dev",
+        )
+        drives = [d for d in drives if not d.startswith(remove)]
 
     return drives
 
@@ -91,8 +106,6 @@ def list_folders():
         req_dir = "$root"
 
     if req_dir == "$root":
-        # req_dir = settings.USER_HOME_DIR
-        # if is_win:
         return {
             "folders": [{"name": d, "path": d} for d in get_all_drives(is_win=is_win)]
         }
@@ -115,4 +128,32 @@ def list_folders():
 
     return {
         "folders": sorted(dirs, key=lambda i: i["name"]),
+    }
+
+
+@api.route("/folder/show-in-files")
+def open_in_file_manager():
+    path = request.args.get("path")
+
+    if path is None:
+        return {"error": "No path provided."}, 400
+
+    show_in_file_manager(path)
+
+    return {"success": True}
+
+
+@api.route("/folder/tracks/all")
+def get_tracks_in_path():
+    path = request.args.get("path")
+
+    if path is None:
+        return {"error": "No path provided."}, 400
+
+    tracks = store.get_tracks_in_path(path)
+    tracks = sorted(tracks, key=lambda i: i.last_mod)
+    tracks = (serialize_track(t) for t in tracks if Path(t.filepath).exists())
+
+    return {
+        "tracks": list(tracks)[:300],
     }

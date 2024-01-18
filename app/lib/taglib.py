@@ -1,13 +1,16 @@
-import datetime
+from dataclasses import dataclass
 import os
 from io import BytesIO
+from pathlib import Path
+import re
 
+import pendulum
 from PIL import Image, UnidentifiedImageError
 from tinytag import TinyTag
 
 from app.settings import Defaults, Paths
 from app.utils.hashing import create_hash
-from app.utils.parsers import parse_title_from_filename, parse_artist_from_filename
+from app.utils.parsers import split_artists
 from app.utils.wintools import win_replace_slash
 
 
@@ -23,22 +26,32 @@ def parse_album_art(filepath: str):
         return None
 
 
-def extract_thumb(filepath: str, webp_path: str) -> bool:
+def extract_thumb(filepath: str, webp_path: str, overwrite=False) -> bool:
     """
-    Extracts the thumbnail from an audio file. Returns the path to the thumbnail.
+    Extracts the thumbnail from an audio file.
+    Returns the path to the thumbnail.
     """
-    img_path = os.path.join(Paths.LG_THUMBS_PATH, webp_path)
-    sm_img_path = os.path.join(Paths.SM_THUMB_PATH, webp_path)
+    original_img_path = os.path.join(Paths.get_original_thumb_path(), webp_path)
+    lg_img_path = os.path.join(Paths.get_lg_thumb_path(), webp_path)
+    sm_img_path = os.path.join(Paths.get_sm_thumb_path(), webp_path)
 
     tsize = Defaults.THUMB_SIZE
     sm_tsize = Defaults.SM_THUMB_SIZE
 
     def save_image(img: Image.Image):
-        img.resize((sm_tsize, sm_tsize), Image.ANTIALIAS).save(sm_img_path, "webp")
-        img.resize((tsize, tsize), Image.ANTIALIAS).save(img_path, "webp")
+        width, height = img.size
+        ratio = width / height
 
-    if os.path.exists(img_path):
-        img_size = os.path.getsize(img_path)
+        img.save(original_img_path, "webp")
+        img.resize((tsize, int(tsize / ratio)), Image.ANTIALIAS).save(
+            lg_img_path, "webp"
+        )
+        img.resize((sm_tsize, int(sm_tsize / ratio)), Image.ANTIALIAS).save(
+            sm_img_path, "webp"
+        )
+
+    if not overwrite and os.path.exists(sm_img_path):
+        img_size = os.path.getsize(sm_img_path)
 
         if img_size > 0:
             return True
@@ -64,16 +77,68 @@ def extract_thumb(filepath: str, webp_path: str) -> bool:
     return False
 
 
-def extract_date(date_str: str | None, filepath: str) -> int:
+def parse_date(date_str: str | None) -> int | None:
+    """
+    Extracts the date from a string and returns a timestamp.
+    """
     try:
-        return int(date_str.split("-")[0])
-    except:  # pylint: disable=bare-except
-        return datetime.date.today().today().year
+        date = pendulum.parse(date_str, strict=False)
+        return int(date.timestamp())
+    except Exception as e:
+        return None
+
+
+def clean_filename(filename: str):
+    if "official" in filename.lower():
+        return re.sub(r"\s*\([^)]*official[^)]*\)", "", filename, flags=re.IGNORECASE)
+
+    return filename
+
+
+@dataclass
+class ParseData:
+    artist: str
+    title: str
+
+    def __post_init__(self):
+        self.artist = split_artists(self.artist)
+
+
+def extract_artist_title(filename: str):
+    path = Path(filename).with_suffix("")
+
+    path = clean_filename(str(path))
+    split_result = path.split(" - ")
+    split_result = [x.strip() for x in split_result]
+
+    if len(split_result) == 1:
+        return ParseData("", split_result[0])
+
+    if len(split_result) > 2:
+        try:
+            int(split_result[0])
+
+            return ParseData(split_result[1], " - ".join(split_result[2:]))
+        except ValueError:
+            pass
+
+    artist = split_result[0]
+    title = split_result[1]
+    return ParseData(artist, title)
 
 
 def get_tags(filepath: str):
+    """
+    Returns the tags for a given audio file.
+    """
+
     filetype = filepath.split(".")[-1]
     filename = (filepath.split("/")[-1]).replace(f".{filetype}", "")
+
+    try:
+        last_mod = round(os.path.getmtime(filepath))
+    except FileNotFoundError:
+        return None
 
     try:
         tags = TinyTag.get(filepath)
@@ -89,22 +154,28 @@ def get_tags(filepath: str):
     if no_artist and not no_albumartist:
         tags.artist = tags.albumartist
 
+    parse_data = None
+
     to_filename = ["title", "album"]
     for tag in to_filename:
         p = getattr(tags, tag)
         if p == "" or p is None:
-            maybe = parse_title_from_filename(filename)
-            setattr(tags, tag, maybe)
+            parse_data = extract_artist_title(filename)
+            title = parse_data.title
+            setattr(tags, tag, title)
 
     parse = ["artist", "albumartist"]
     for tag in parse:
         p = getattr(tags, tag)
 
         if p == "" or p is None:
-            maybe = parse_artist_from_filename(filename)
+            if not parse_data:
+                parse_data = extract_artist_title(filename)
 
-            if maybe:
-                setattr(tags, tag, ", ".join(maybe))
+            artist = parse_data.artist
+
+            if artist:
+                setattr(tags, tag, ", ".join(artist))
             else:
                 setattr(tags, tag, "Unknown")
 
@@ -140,9 +211,16 @@ def get_tags(filepath: str):
     tags.image = f"{tags.albumhash}.webp"
     tags.folder = win_replace_slash(os.path.dirname(filepath))
 
-    tags.date = extract_date(tags.year, filepath)
+    tags.date = parse_date(tags.year) or int(last_mod)
     tags.filepath = win_replace_slash(filepath)
-    tags.filetype = filetype
+    tags.last_mod = last_mod
+
+    tags.artists = tags.artist
+    tags.albumartists = tags.albumartist
+
+    # sub underscore with space
+    tags.title = tags.title.replace("_", " ")
+    tags.album = tags.album.replace("_", " ")
 
     tags = tags.__dict__
 
@@ -162,6 +240,9 @@ def get_tags(filepath: str):
         "samplerate",
         "track_total",
         "year",
+        "bitdepth",
+        "artist",
+        "albumartist",
     ]
 
     for tag in to_delete:

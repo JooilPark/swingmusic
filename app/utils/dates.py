@@ -1,64 +1,47 @@
+import pendulum
 from datetime import datetime
 
 _format = "%Y-%m-%d %H:%M:%S"
 
 
-def create_new_date():
+def create_new_date(date: datetime = None) -> str:
     """
     Creates a new date and time string in the format of "YYYY-MM-DD HH:MM:SS"
     :return: A string of the current date and time.
     """
-    now = datetime.now()
-    return now.strftime(_format)
+    if not date:
+        date = datetime.now()
+
+    return date.strftime(_format)
 
 
 def date_string_to_time_passed(prev_date: str) -> str:
     """
     Converts a date string to time passed. e.g. 2 minutes ago, 1 hour ago, yesterday, 2 days ago, 2 weeks ago, etc.
     """
-    now = datetime.now()
-    then = datetime.strptime(prev_date, _format)
+    now = datetime.now().timestamp()
+    then = datetime.strptime(prev_date, _format).timestamp()
 
     diff = now - then
-    seconds = diff.seconds
-    print(seconds)
+    now = pendulum.now()
+    return now.subtract(seconds=diff).diff_for_humans()
 
-    if seconds < 0:
-        return "from the future 🛸"
 
-    if seconds < 15:
-        return "now"
+def seconds_to_time_string(seconds):
+    """
+    Converts seconds to a time string. e.g. 1 hour 2 minutes, 1 hour 2 seconds, 1 hour, 1 minute 2 seconds, etc.
+    """
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    remaining_seconds = seconds % 60
 
-    if seconds < 60:
-        return f"{int(seconds)} seconds ago"
+    if hours > 0:
+        if minutes > 0:
+            return f"{hours} hr{'s' if hours > 1 else ''}, {minutes} minute{'s' if minutes > 1 else ''}"
 
-    if seconds < 3600:
-        return f"{int(seconds // 60)} minutes ago"
+        return f"{hours} hr{'s' if hours > 1 else ''}"
 
-    if seconds < 86400:
-        return f"{int(seconds // 3600)} hours ago"
+    if minutes > 0:
+        return f"{minutes} minute{'s' if minutes > 1 else ''}"
 
-    days = diff.days
-
-    if days == 1:
-        return "yesterday"
-
-    if days < 7:
-        return f"{days} days ago"
-
-    if days < 14:
-        return "1 week ago"
-
-    if days < 30:
-        return f"{int(days // 7)} weeks ago"
-
-    if days < 60:
-        return "1 month ago"
-
-    if days < 365:
-        return f"{int(days // 30)} months ago"
-
-    if days < 730:
-        return "1 year ago"
-
-    return f"{int(days // 365)} years ago"
+    return f"{remaining_seconds} second{'s' if remaining_seconds > 1 else ''}"

@@ -4,11 +4,18 @@ This library contains all the functions related to playlists.
 import os
 import random
 import string
+from datetime import datetime
 from typing import Any
 
 from PIL import Image, ImageSequence
 
 from app import settings
+from app.lib.home.recentlyadded import get_recent_tracks
+from app.models.playlist import Playlist
+from app.models.track import Track
+from app.store.albums import AlbumStore
+from app.store.tracks import TrackStore
+from app.utils.dates import create_new_date, date_string_to_time_passed
 
 
 def create_thumbnail(image: Any, img_path: str) -> str:
@@ -16,7 +23,9 @@ def create_thumbnail(image: Any, img_path: str) -> str:
     Creates a 250 x 250 thumbnail from a playlist image
     """
     thumb_path = "thumb_" + img_path
-    full_thumb_path = os.path.join(settings.Paths.APP_DIR, "images", "playlists", thumb_path)
+    full_thumb_path = os.path.join(
+        settings.Paths.get_app_dir(), "images", "playlists", thumb_path
+    )
 
     aspect_ratio = image.width / image.height
 
@@ -33,7 +42,9 @@ def create_gif_thumbnail(image: Any, img_path: str):
     Creates a 250 x 250 thumbnail from a playlist image
     """
     thumb_path = "thumb_" + img_path
-    full_thumb_path = os.path.join(settings.Paths.APP_DIR, "images", "playlists", thumb_path)
+    full_thumb_path = os.path.join(
+        settings.Paths.get_app_dir(), "images", "playlists", thumb_path
+    )
 
     frames = []
 
@@ -50,19 +61,22 @@ def create_gif_thumbnail(image: Any, img_path: str):
     return thumb_path
 
 
-def save_p_image(file, pid: str):
+def save_p_image(
+    img: Image, pid: str, content_type: str = None, filename: str = None
+) -> str:
     """
     Saves a playlist banner image and returns the filepath.
     """
-    img = Image.open(file)
+    # img = Image.open(file)
 
     random_str = "".join(random.choices(string.ascii_letters + string.digits, k=5))
 
-    filename = pid + str(random_str) + ".webp"
+    if not filename:
+        filename = pid + str(random_str) + ".webp"
 
-    full_img_path = os.path.join(settings.Paths.PLAYLIST_IMG_PATH, filename)
+    full_img_path = os.path.join(settings.Paths.get_playlist_img_path(), filename)
 
-    if file.content_type == "image/gif":
+    if content_type == "image/gif":
         frames = []
 
         for frame in ImageSequence.Iterator(img):
@@ -78,33 +92,68 @@ def save_p_image(file, pid: str):
 
     return filename
 
-#
-# class ValidatePlaylistThumbs:
-#     """
-#     Removes all unused images in the images/playlists folder.
-#     """
-#
-#     def __init__(self) -> None:
-#         images = []
-#         playlists = Get.get_all_playlists()
-#
-#         log.info("Validating playlist thumbnails")
-#         for playlist in playlists:
-#             if playlist.image:
-#                 img_path = playlist.image.split("/")[-1]
-#                 thumb_path = playlist.thumb.split("/")[-1]
-#
-#                 images.append(img_path)
-#                 images.append(thumb_path)
-#
-#         p_path = os.path.join(settings.APP_DIR, "images", "playlists")
-#
-#         for image in os.listdir(p_path):
-#             if image not in images:
-#                 os.remove(os.path.join(p_path, image))
-#
-#         log.info("Validating playlist thumbnails ... ✅")
-#
+
+def duplicate_images(images: list):
+    if len(images) == 1:
+        images *= 4
+    elif len(images) == 2:
+        images += list(reversed(images))
+    elif len(images) == 3:
+        images = images + images[:1]
+
+    return images
 
 
-# TODO: Fix ValidatePlaylistThumbs
+def get_first_4_images(
+    tracks: list[Track] = [], trackhashes: list[str] = []
+) -> list[dict["str", str]]:
+    if len(trackhashes) > 0:
+        tracks = TrackStore.get_tracks_by_trackhashes(trackhashes)
+
+    albums = []
+
+    for track in tracks:
+        if track.albumhash not in albums:
+            albums.append(track.albumhash)
+
+            if len(albums) == 4:
+                break
+
+    albums = AlbumStore.get_albums_by_hashes(albums)
+    images = [
+        {
+            "image": album.image,
+            "color": "".join(album.colors),
+        }
+        for album in albums
+    ]
+
+    if len(images) == 4:
+        return images
+
+    return duplicate_images(images)
+
+
+def get_recently_added_playlist(cutoff: int = 14):
+    playlist = Playlist(
+        id="recentlyadded",
+        name="Recently Added",
+        image=None,
+        last_updated="Now",
+        settings={},
+        trackhashes=[],
+    )
+
+    tracks = get_recent_tracks(cutoff)
+    try:
+        date = datetime.fromtimestamp(tracks[0].created_date)
+    except IndexError:
+        return playlist, []
+
+    playlist.last_updated = date_string_to_time_passed(create_new_date(date))
+
+    images = get_first_4_images(tracks=tracks)
+    playlist.images = images
+    playlist.set_count(len(tracks))
+
+    return playlist, tracks

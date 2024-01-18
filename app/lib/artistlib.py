@@ -1,19 +1,28 @@
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from io import BytesIO
-
-from PIL import Image, UnidentifiedImageError
-import requests
+from collections import namedtuple
+from itertools import groupby
+import os
 import urllib
+from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
+from pathlib import Path
 
-from tqdm import tqdm
-from requests.exceptions import ConnectionError as ReqConnError, ReadTimeout
+import requests
+from PIL import Image, PngImagePlugin, UnidentifiedImageError
+from requests.exceptions import ConnectionError as RequestConnectionError
+from requests.exceptions import ReadTimeout
 
 from app import settings
-from app.models import Artist, Track, Album
-from app.utils.hashing import create_hash
-
+from app.models import Album, Artist, Track
 from app.store import artists as artist_store
+from app.store.tracks import TrackStore
+from app.utils.hashing import create_hash
+from app.utils.progressbar import tqdm
+
+CHECK_ARTIST_IMAGES_KEY = ""
+
+LARGE_ENOUGH_NUMBER = 100
+PngImagePlugin.MAX_TEXT_CHUNK = LARGE_ENOUGH_NUMBER * (1024**2)
+# https://stackoverflow.com/a/61466412
 
 
 def get_artist_image_link(artist: str):
@@ -26,25 +35,28 @@ def get_artist_image_link(artist: str):
 
         url = f"https://api.deezer.com/search/artist?q={query}"
         response = requests.get(url, timeout=30)
-        data = response.json()
+        try:
+            data = response.json()
+        except requests.exceptions.JSONDecodeError:
+            return None
 
         for res in data["data"]:
             res_hash = create_hash(res["name"], decode=True)
             artist_hash = create_hash(artist, decode=True)
 
             if res_hash == artist_hash:
-                return res["picture_big"]
+                return str(res["picture_big"])
 
         return None
-    except (ReqConnError, ReadTimeout, IndexError, KeyError):
+    except (RequestConnectionError, ReadTimeout, IndexError, KeyError):
         return None
 
 
 # TODO: Move network calls to utils/network.py
 class DownloadImage:
     def __init__(self, url: str, name: str) -> None:
-        sm_path = Path(settings.Paths.ARTIST_IMG_SM_PATH) / name
-        lg_path = Path(settings.Paths.ARTIST_IMG_LG_PATH) / name
+        sm_path = Path(settings.Paths.get_artist_img_sm_path()) / name
+        lg_path = Path(settings.Paths.get_artist_img_lg_path()) / name
 
         img = self.download(url)
 
@@ -73,24 +85,49 @@ class DownloadImage:
 
 
 class CheckArtistImages:
-    def __init__(self):
-        with ThreadPoolExecutor() as pool:
-            list(
+    def __init__(self, instance_key: str):
+        global CHECK_ARTIST_IMAGES_KEY
+        CHECK_ARTIST_IMAGES_KEY = instance_key
+
+        # read all files in the artist image folder
+        path = settings.Paths.get_artist_img_sm_path()
+        processed = "".join(os.listdir(path)).replace("webp", "")
+
+        # filter out artists that already have an image
+        artists = filter(
+            lambda a: a.artisthash not in processed, artist_store.ArtistStore.artists
+        )
+        artists = list(artists)
+
+        # process the rest
+        key_artist_map = ((instance_key, artist) for artist in artists)
+
+        with ThreadPoolExecutor(max_workers=14) as executor:
+            res = list(
                 tqdm(
-                    pool.map(self.download_image, artist_store.ArtistStore.artists),
-                    total=len(artist_store.ArtistStore.artists),
-                    desc="Downloading artist images",
+                    executor.map(self.download_image, key_artist_map),
+                    total=len(artists),
+                    desc="Downloading missing artist images",
                 )
             )
 
+            list(res)
+
     @staticmethod
-    def download_image(artist: Artist):
+    def download_image(_map: tuple[str, Artist]):
         """
         Checks if an artist image exists and downloads it if not.
 
         :param artist: The artist name
         """
-        img_path = Path(settings.Paths.ARTIST_IMG_SM_PATH) / f"{artist.artisthash}.webp"
+        instance_key, artist = _map
+
+        if CHECK_ARTIST_IMAGES_KEY != instance_key:
+            return
+
+        img_path = (
+            Path(settings.Paths.get_artist_img_sm_path()) / f"{artist.artisthash}.webp"
+        )
 
         if img_path.exists():
             return
@@ -138,7 +175,7 @@ def get_artists_from_tracks(tracks: list[Track]) -> set[str]:
     """
     artists = set()
 
-    master_artist_list = [[x.name for x in t.artist] for t in tracks]
+    master_artist_list = [[x.name for x in t.artists] for t in tracks]
     artists = artists.union(*master_artist_list)
 
     return artists
@@ -155,17 +192,64 @@ def get_albumartists(albums: list[Album]) -> set[str]:
     return artists
 
 
-def get_all_artists(
-        tracks: list[Track], albums: list[Album]
-) -> list[Artist]:
-    artists_from_tracks = get_artists_from_tracks(tracks=tracks)
-    artist_from_albums = get_albumartists(albums=albums)
+def get_all_artists(tracks: list[Track], albums: list[Album]) -> list[Artist]:
+    TrackInfo = namedtuple(
+        "TrackInfo",
+        [
+            "artisthash",
+            "albumhash",
+            "trackhash",
+            "duration",
+            "artistname",
+            "created_date",
+        ],
+    )
+    src_tracks = TrackStore.tracks
+    all_tracks: set[TrackInfo] = set()
 
-    artists = list(artists_from_tracks.union(artist_from_albums))
-    artists = sorted(artists)
+    for track in src_tracks:
+        artist_hashes = {(a.name, a.artisthash) for a in track.artists}.union(
+            (a.name, a.artisthash) for a in track.albumartists
+        )
 
-    lower_artists = set(a.lower().strip() for a in artists)
-    indices = [[ar.lower().strip() for ar in artists].index(a) for a in lower_artists]
-    artists = [artists[i] for i in indices]
+        for artist in artist_hashes:
+            track_info = TrackInfo(
+                artistname=artist[0],
+                artisthash=artist[1],
+                albumhash=track.albumhash,
+                trackhash=track.trackhash,
+                duration=track.duration,
+                created_date=track.created_date,
+                # work on created date
+            )
 
-    return [Artist(a) for a in artists]
+            all_tracks.add(track_info)
+
+    all_tracks = sorted(all_tracks, key=lambda x: x.artisthash)
+    all_tracks = groupby(all_tracks, key=lambda x: x.artisthash)
+
+    artists = []
+
+    for artisthash, tracks in all_tracks:
+        tracks: list[TrackInfo] = list(tracks)
+
+        artistname = (
+            sorted({t.artistname for t in tracks})[0]
+            if len(tracks) > 1
+            else tracks[0].artistname
+        )
+
+        albumcount = len({t.albumhash for t in tracks})
+        duration = sum(t.duration for t in tracks)
+        created_date = min(t.created_date for t in tracks)
+
+        artist = Artist(name=artistname)
+
+        artist.set_trackcount(len(tracks))
+        artist.set_albumcount(albumcount)
+        artist.set_duration(duration)
+        artist.set_created_date(created_date)
+
+        artists.append(artist)
+
+    return artists
